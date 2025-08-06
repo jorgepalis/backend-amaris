@@ -205,6 +205,20 @@ python manage.py runserver
 - **Health Check:** http://127.0.0.1:8000/api/funds/
 - **Usuario Info:** http://127.0.0.1:8000/api/user/
 
+### **7. Ejecutar Pruebas Automatizadas**
+```bash
+# Ejecutar todas las pruebas del sistema (recomendado)
+pytest tests/
+
+# Ejecutar pruebas con salida detallada
+pytest tests/ -v
+
+# Ejecutar pruebas específicas del sistema de notificaciones
+pytest tests/test_notifications.py -v
+```
+
+**Nota:** Las pruebas incluyen validaciones completas del sistema de notificaciones, reglas de negocio y construcción de mensajes.
+
 ## 📚 Documentación API
 
 - **Swagger UI:** `http://127.0.0.1:8000/api/docs/`
@@ -450,6 +464,23 @@ def validate(self, attrs):
    - Validación de tipos inválidos
 
 ### **Comandos de Testing:**
+
+#### **Ejecutar Suite de Pruebas Automatizadas:**
+```bash
+# Ejecutar todas las pruebas del sistema
+pytest tests/
+
+# Ejecutar pruebas con salida detallada
+pytest tests/ -v
+
+# Ejecutar pruebas específicas de notificaciones
+pytest tests/test_notifications.py -v
+
+# Ejecutar pruebas con cobertura (si tienes pytest-cov instalado)
+pytest tests/ --cov=funds
+```
+
+#### **Testing Manual de la API:**
 ```bash
 # Probar configuración inicial
 python backend/funds/setup_simple.py
@@ -487,33 +518,205 @@ prueba-tecnica-amaris/
     └── manage.py               # Comando de Django
 ```
 
-## ⚡ Rendimiento y Escalabilidad
+## 🚀 Despliegue en AWS con CloudFormation
 
-### **Optimizaciones Implementadas:**
-- **Consultas eficientes** con Partition Key + Sort Key en DynamoDB
-- **Índices optimizados** para consultas frecuentes
-- **Serializers cacheable** para validaciones repetitivas
-- **Respuestas ligeras** con datos esenciales
-- **Logging estructurado** para debugging
+### **Prerequisitos AWS:**
+- **Cuenta de AWS** con permisos administrativos
+- **CLI de AWS** configurado con credenciales apropiadas
+- **Dominio registrado** (opcional para SSL)
+- **Conocimientos básicos** de AWS EC2, Load Balancer y Certificate Manager
 
-### **Preparado para Escalar:**
-- **DynamoDB serverless** - escalado automático
-- **Arquitectura stateless** - múltiples instancias
-- **APIs RESTful** - integración sencilla
-- **Validaciones desacopladas** - fácil mantenimiento
+### **Paso 1: Configurar Variables de Entorno en SSM Parameter Store**
 
----
+Antes del despliegue, configure todos los parámetros necesarios en AWS Systems Manager Parameter Store con el prefijo `AMARIS_`:
 
-## 🚀 Próximos Pasos Sugeridos
+```bash
+# Configurar parámetros en SSM (ejecutar desde AWS CLI)
+aws ssm put-parameter --name "AMARIS_AWS_ACCESS_KEY_ID" --value "tu_access_key" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_AWS_SECRET_ACCESS_KEY" --value "tu_secret_key" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_AWS_DEFAULT_REGION" --value "us-east-1" --type "String"
+aws ssm put-parameter --name "AMARIS_DEBUG" --value "False" --type "String"
+aws ssm put-parameter --name "AMARIS_SECRET_KEY" --value "tu_django_secret_key" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_DYNAMODB_TABLE_PREFIX" --value "funds_" --type "String"
+aws ssm put-parameter --name "AMARIS_NOTIFICATIONS_ENABLED" --value "true" --type "String"
+aws ssm put-parameter --name "AMARIS_NOTIFICATION_MODE" --value "production" --type "String"
 
-1. **Testing Automatizado** - Implementar test suite completo
-2. **Cache Redis** - Para consultas frecuentes de fondos
-3. **Logging Avanzado** - CloudWatch integration
-4. **Monitoreo** - Health checks y métricas
-5. **CI/CD Pipeline** - Deployment automatizado
-6. **Autenticación** - JWT para múltiples usuarios
-7. **WebSockets** - Notificaciones en tiempo real
+# Configuración de Email (opcional)
+aws ssm put-parameter --name "AMARIS_EMAIL_HOST" --value "smtp.gmail.com" --type "String"
+aws ssm put-parameter --name "AMARIS_EMAIL_PORT" --value "587" --type "String"
+aws ssm put-parameter --name "AMARIS_EMAIL_USE_TLS" --value "true" --type "String"
+aws ssm put-parameter --name "AMARIS_EMAIL_HOST_USER" --value "tu_email@gmail.com" --type "String"
+aws ssm put-parameter --name "AMARIS_EMAIL_HOST_PASSWORD" --value "tu_app_password" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_DEFAULT_FROM_EMAIL" --value "tu_email@gmail.com" --type "String"
 
----
+# Configuración de Twilio (opcional)
+aws ssm put-parameter --name "AMARIS_TWILIO_ACCOUNT_SID" --value "tu_twilio_sid" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_TWILIO_AUTH_TOKEN" --value "tu_twilio_token" --type "SecureString"
+aws ssm put-parameter --name "AMARIS_TWILIO_MESSAGING_SERVICE_SID" --value "tu_messaging_service" --type "String"
+aws ssm put-parameter --name "AMARIS_TWILIO_PHONE_NUMBER" --value "+1234567890" --type "String"
+```
 
-**✨ Desarrollado paso a paso siguiendo las especificaciones de la prueba técnica con arquitectura robusta y escalable** 🏗️
+### **Paso 2: Desplegar Stack de CloudFormation**
+
+1. **Subir la plantilla de CloudFormation:**
+   ```bash
+   # Desde la consola de AWS CloudFormation
+   # 1. Ir a CloudFormation > Create Stack
+   # 2. Subir el archivo: backend/cloudformation/backend.yaml
+   # 3. Configurar parámetros del stack
+   ```
+
+2. **Parámetros requeridos:**
+   - `KeyName`: Par de llaves SSH para acceso a EC2
+   - `SecurityGroupIds`: Grupo de seguridad con puertos 22, 80, 8000 abiertos
+   - `SubnetId`: Subred pública donde desplegar la instancia
+
+3. **Ejecutar el stack:**
+   ```bash
+   # Alternativamente desde CLI
+   aws cloudformation create-stack \
+     --stack-name backend-amaris-stack \
+     --template-body file://backend/cloudformation/backend.yaml \
+     --parameters ParameterKey=KeyName,ParameterValue=tu-key-pair \
+     --capabilities CAPABILITY_IAM
+   ```
+
+### **Paso 3: Configurar la Base de Datos**
+
+Una vez desplegada la instancia, conectarse via SSH y configurar DynamoDB:
+
+```bash
+# 1. Conectarse a la instancia EC2
+ssh -i ~/.ssh/tu-key.pem ec2-user@ip-publica-ec2
+
+# 2. Verificar que Docker esté corriendo
+sudo docker ps
+
+# 3. Entrar al contenedor de la aplicación
+sudo docker exec -it <container-id> bash
+
+# 4. Navegar al directorio de la aplicación
+cd /app/funds
+
+# 5. Ejecutar script de configuración inicial
+python setup_simple.py
+
+# 6. Verificar que las tablas se crearon correctamente
+# El script mostrará el status de cada tabla DynamoDB
+```
+
+### **Paso 4: Configurar Certificado SSL en ACM**
+
+Para HTTPS, registre un certificado SSL en AWS Certificate Manager:
+
+```bash
+# 1. Ir a AWS Certificate Manager (ACM)
+# 2. Request a certificate > Request a public certificate
+# 3. Agregar domain names:
+#    - api.tudominio.com
+#    - *.tudominio.com (wildcard opcional)
+# 4. Seleccionar DNS validation
+# 5. Copiar el ARN del certificado generado
+```
+
+**Ejemplo de ARN:** `arn:aws:acm:us-east-1:123456789012:certificate/abc123def-4567-890a-bcde-f123456789ab`
+
+### **Paso 5: Configurar Application Load Balancer**
+
+1. **Crear Target Group:**
+   ```bash
+   # En la consola de EC2 > Load Balancing > Target Groups
+   # 1. Create target group
+   # 2. Target type: Instances
+   # 3. Protocol: HTTP, Port: 8000 (puerto del Django)
+   # 4. Health check path: /api/funds/
+   # 5. Registrar la instancia EC2 en el target group
+   ```
+
+2. **Crear Application Load Balancer:**
+   ```bash
+   # En EC2 > Load Balancing > Load Balancers
+   # 1. Create Application Load Balancer
+   # 2. Internet-facing, IPv4
+   # 3. Seleccionar VPC y subredes públicas (mínimo 2 AZ)
+   # 4. Security group: permitir HTTP (80) y HTTPS (443)
+   ```
+
+3. **Configurar Listeners:**
+   - **Listener HTTP (Puerto 80):**
+     - Action: Redirect to HTTPS
+     - Port: 443
+     - Status code: 301
+   
+   - **Listener HTTPS (Puerto 443):**
+     - Protocol: HTTPS
+     - SSL Certificate: Seleccionar el certificado de ACM
+     - Default action: Forward to target group creado
+
+### **Paso 6: Configurar DNS en Cloudflare**
+
+Configure el subdominio para apuntar al Load Balancer:
+
+```bash
+# En el panel de Cloudflare:
+# 1. Ir a DNS > Records
+# 2. Crear registro CNAME:
+#    - Type: CNAME
+#    - Name: api
+#    - Content: dns-name-del-load-balancer.region.elb.amazonaws.com
+#    - Proxy status: DNS only (gray cloud)
+# 3. Guardar cambios
+```
+
+### **Arquitectura Final del Despliegue:**
+
+```
+Internet
+   ↓
+Cloudflare DNS (api.tudominio.com)
+   ↓
+Application Load Balancer (HTTPS)
+   ↓
+Target Group (Puerto 8000)
+   ↓
+EC2 Instance (Docker + Django)
+   ↓
+DynamoDB Tables
+```
+
+### **Verificación del Despliegue:**
+
+```bash
+# Verificar que la API esté funcionando
+curl https://api.tudominio.com/api/funds/
+
+# Verificar redirección HTTP → HTTPS
+curl -I http://api.tudominio.com/api/funds/
+
+# Verificar certificado SSL
+openssl s_client -connect api.tudominio.com:443 -servername api.tudominio.com
+```
+
+### **URLs de la Aplicación Desplegada:**
+
+- **API Documentation:** `https://api.tudominio.com/api/docs/`
+- **Health Check:** `https://api.tudominio.com/api/funds/`
+- **Admin Interface:** `https://api.tudominio.com/admin/`
+
+### **Monitoreo y Logs:**
+
+- **CloudWatch Logs:** `/aws/ec2/django-app-logs`
+- **Application Logs:** Disponibles en CloudWatch
+- **Load Balancer Metrics:** CloudWatch Metrics
+- **Instance Monitoring:** EC2 Detailed Monitoring
+
+### **Consideraciones de Seguridad:**
+
+- ✅ **HTTPS obligatorio** con certificado válido
+- ✅ **Parámetros sensibles** en SSM Parameter Store encriptados
+- ✅ **Security Groups** configurados para mínimos permisos
+- ✅ **IAM Roles** con permisos específicos y limitados
+- ✅ **Logs centralizados** en CloudWatch
+
+
+
