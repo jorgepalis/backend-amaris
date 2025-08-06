@@ -153,7 +153,6 @@ GET    /api/schema/                     # Schema OpenAPI JSON
 ### **1. Clonar el Proyecto**
 ```bash
 git clone <repository-url>
-cd prueba-tecnica-amaris
 ```
 
 ### **2. Instalar Dependencias**
