@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Backend Django EC2 con .env desde Parameter Store (Versión Final Corregida)'
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de llaves para SSH
+    Default: amaris
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: IDs de los grupos de seguridad
+    Default: sg-0dbb2ae453c765919
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: ID de la subred donde se lanzará la instancia
+    Default: subnet-0cf68f988c4c02ba5
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: ID de la AMI más reciente de Amazon Linux 2
+
+Resources:
+  BackendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AppPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/AMARIS_*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:django-app-logs:*"
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BackendInstanceRole
+
+  BackendEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref BackendInstanceProfile
+      KeyName: !Ref KeyName
+      SecurityGroupIds: !Ref SecurityGroupIds
+      SubnetId: !Ref SubnetId
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          
+          # 1. Actualizar e instalar dependencias
+          yum update -y
+          amazon-linux-extras install -y docker
+          yum install -y git aws-cli
+          systemctl enable docker
+          systemctl start docker
+          usermod -a -G docker ec2-user
+          
+          # 2. Instalar docker-compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          
+          # 3. Clonar el repositorio y establecer permisos correctos
+          cd /home/ec2-user
+          git clone https://github.com/jorgepalis/prueba-tecnica-amaris.git app || { echo "Fallo al clonar el repositorio"; exit 1; }
+          
+          chown -R ec2-user:ec2-user /home/ec2-user/app
+          
+          cd /home/ec2-user/app/backend
+          
+          # 4. Crear archivo .env con parámetros de SSM
+          > .env
+          for param in \
+            AMARIS_AWS_ACCESS_KEY_ID \
+            AMARIS_AWS_DEFAULT_REGION \
+            AMARIS_AWS_SECRET_ACCESS_KEY \
+            AMARIS_DEBUG \
+            AMARIS_DEFAULT_FROM_EMAIL \
+            AMARIS_DYNAMODB_TABLE_PREFIX \
+            AMARIS_EMAIL_HOST \
+            AMARIS_EMAIL_HOST_PASSWORD \
+            AMARIS_EMAIL_HOST_USER \
+            AMARIS_EMAIL_PORT \
+            AMARIS_EMAIL_USE_TLS \
+            AMARIS_NOTIFICATIONS_ENABLED \
+            AMARIS_NOTIFICATION_MODE \
+            AMARIS_SECRET_KEY \
+            AMARIS_TWILIO_ACCOUNT_SID \
+            AMARIS_TWILIO_AUTH_TOKEN \
+            AMARIS_TWILIO_MESSAGING_SERVICE_SID \
+            AMARIS_TWILIO_PHONE_NUMBER
+          do
+            value=$(aws ssm get-parameter --name $param --region ${AWS::Region} --with-decryption --query 'Parameter.Value' --output text 2>/dev/null)
+            if [ $? -eq 0 ]; then
+              # ===== LÍNEA CORREGIDA =====
+              # Se usan ${!param} y ${!value} para que !Sub no intente resolverlas.
+              echo "${!param}=${!value}" >> .env
+            else
+              echo "ADVERTENCIA: Fallo al obtener el parámetro $param. Se continuará, pero la app podría no funcionar."
+            fi
+          done
+          chown ec2-user:ec2-user .env
+
+          # 5. Construir la imagen de Docker (una sola vez)
+          /usr/local/bin/docker-compose build
+          
+          # 6. Configurar systemd para gestionar la aplicación
+          cat << EOF > /etc/systemd/system/django-app.service
+          [Unit]
+          Description=Django App Docker Compose Service
+          Requires=docker.service
+          After=docker.service
+          
+          [Service]
+          User=ec2-user
+          Group=docker
+          WorkingDirectory=/home/ec2-user/app/backend
+          ExecStart=/usr/local/bin/docker-compose up
+          ExecStop=/usr/local/bin/docker-compose down
+          Restart=always
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # 7. Activar e iniciar el servicio
+          systemctl enable django-app.service
+          systemctl start django-app.service
+          
+          # 8. Configurar CloudWatch Logs
+          yum install -y amazon-cloudwatch-agent
+          cat << EOF > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/home/ec2-user/app/backend/logs/*.log",
+                      "log_group_name": "django-app-logs",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOF
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+Outputs:
+  InstanceId:
+    Value: !Ref BackendEC2
+    Description: ID de la instancia EC2
+  PublicIP:
+    Value: !GetAtt BackendEC2.PublicIp
+    Description: Dirección IP pública de la instancia EC2
