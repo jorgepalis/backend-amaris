@@ -83,11 +83,11 @@ Resources:
           
           # 3. Clonar el repositorio y establecer permisos correctos
           cd /home/ec2-user
-          git clone https://github.com/jorgepalis/prueba-tecnica-amaris.git app || { echo "Fallo al clonar el repositorio"; exit 1; }
+          git clone https://github.com/jorgepalis/backend-amaris.git app || { echo "Fallo al clonar el repositorio"; exit 1; }
           
           chown -R ec2-user:ec2-user /home/ec2-user/app
           
-          cd /home/ec2-user/app/backend
+          cd /home/ec2-user/app
           
           # 4. Crear archivo .env con parámetros de SSM
           > .env
@@ -135,7 +135,7 @@ Resources:
           [Service]
           User=ec2-user
           Group=docker
-          WorkingDirectory=/home/ec2-user/app/backend
+          WorkingDirectory=/home/ec2-user/app
           ExecStart=/usr/local/bin/docker-compose up
           ExecStop=/usr/local/bin/docker-compose down
           Restart=always
@@ -157,7 +157,7 @@ Resources:
                 "files": {
                   "collect_list": [
                     {
-                      "file_path": "/home/ec2-user/app/backend/logs/*.log",
+                      "file_path": "/home/ec2-user/app/logs/*.log",
                       "log_group_name": "django-app-logs",
                       "log_stream_name": "{instance_id}"
                     }
